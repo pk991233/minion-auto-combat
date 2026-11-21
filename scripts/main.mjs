@@ -1,0 +1,108 @@
+import {ID, enabled, marker, profile, renderHUD} from "./profile.mjs";
+import {reach, selectTarget, targetable, strike, incapacitated} from "./attack.mjs";
+import {planRoute, walkSpeed, canReach, stepOpen} from "./movement.mjs";
+
+const jobs=new Map();
+const chains=new Map();
+const position=t=>({x:t.document.x,y:t.document.y,elevation:t.document.elevation});
+
+function sameTurn(combat,combatant,round) {
+  return game.user.isActiveGM && game.combat?.id===combat.id && combat.started &&
+    combat.round===round && combat.combatant?.id===combatant.id && !game.paused &&
+    canvas.ready && combat.scene?.id===canvas.scene.id;
+}
+
+async function play(combat,combatant,round,token,job) {
+  const guard=()=>!job.cancelled && sameTurn(combat,combatant,round) &&
+    canvas.tokens.get(token.id)===token && enabled(token);
+  if (!guard() || combatant.getFlag(ID,"lastRound")===round) return;
+  const canAct=()=>guard() && !combatant.defeated && token.actor.system.attributes.hp?.value>0 && !incapacitated(token.actor);
+  const cfg=profile(token);
+  if (canAct() && !cfg.valid) {
+    ui.notifications.warn(token.name+"：請從 Token 的機器人按鈕指定攻擊順序。本回合交由 GM。");
+    return;
+  }
+  // Persist before side effects. Reconnection after an interrupted attack leaves the turn to the GM.
+  await combatant.setFlag(ID,"lastRound",round);
+  const history=[position(token)];
+  for (const row of cfg.rows) {
+    for (let n=0;n<row.count;n++) {
+      if (!canAct()) break;
+      const target=selectTarget(token);
+      if (!target) break;
+      // Synthetic actor documents can be refreshed after consuming an item or moving.
+      const [itemId,activityId]=row.key.split(".");
+      const item=token.actor.items.get(itemId), activity=item?.system.activities.get(activityId);
+      if (!activity) continue;
+      const entry={item,activity}, range=reach(entry);
+      if (range.max<=0) continue;
+      if (!canReach(token,target,range.normal)) {
+        const route=planRoute(token,target,range.normal,history,walkSpeed(token));
+        for (const dest of route) {
+          if (!canAct() || !targetable(token,target) || canReach(token,target,range.normal)) break;
+          if (!stepOpen(token,position(token),dest)) break;
+          const moved=await token.document.move(dest,{method:"api",showRuler:false});
+          await token.movementAnimationPromise;
+          const actual=position(token);
+          if (!moved || (actual.x===history.at(-1).x && actual.y===history.at(-1).y)) break;
+          history.push(actual);
+          if (actual.x!==dest.x || actual.y!==dest.y) break;
+        }
+      }
+      if (!canAct() || !targetable(token,target) || !canReach(token,target,range.max)) continue;
+      if (!await strike(token,target,entry,range,canAct)) return;
+    }
+  }
+  if (!guard()) return;
+  const chain=chains.get(combat.id) ?? new Set();
+  chain.add(combatant.id);
+  chains.set(combat.id,chain);
+  const manualTurn=combat.turns.some(c=>!c.defeated && !enabled(canvas.tokens.get(c.tokenId)));
+  if (!manualTurn && combat.turns.filter(c=>!c.defeated).every(c=>chain.has(c.id))) {
+    chains.delete(combat.id);
+    ui.notifications.info("場上只剩自動小怪，已完成一輪。請由 GM 推進或結束戰鬥。");
+    return;
+  }
+  await combat.nextTurn();
+}
+
+function schedule(combat) {
+  const c=combat?.combatant;
+  for (const job of jobs.values()) {
+    if (job.combatId===combat?.id && (job.combatantId!==c?.id || job.round!==combat.round)) job.cancelled=true;
+  }
+  if (!c || !sameTurn(combat,c,combat.round)) return;
+  const token=canvas.tokens.get(c.tokenId);
+  if (!enabled(token)) { chains.delete(combat.id); return; }
+  const round=combat.round;
+  const key=[combat.id,round,c.id].join("/");
+  if (jobs.has(key) || c.getFlag(ID,"lastRound")===round) return;
+  const job={cancelled:false,combatId:combat.id,combatantId:c.id,round,tokenId:token.document.uuid,effectId:marker(token).id};
+  jobs.set(key,job);
+  play(combat,c,round,token,job).catch(error=>{
+    console.error(ID,error);
+    ui.notifications.error(token.name+" 的自動戰鬥已停止，請由 GM 接手。"+error.message);
+  }).finally(()=>jobs.delete(key));
+}
+
+Hooks.once("init",()=>{
+  if (game.release.generation!==13 || game.system.id!=="dnd5e" || !/^5\./.test(game.system.version)) return;
+  game.settings.register(ID,"applyDamage",{name:"自動套用傷害",hint:"命中或豁免結算後，由 dnd5e 處理抗性、免疫與暫時生命值。若另有模組自動扣血，可關閉這項設定。",scope:"world",config:true,type:Boolean,default:true});
+  Hooks.on("renderTokenHUD",renderHUD);
+  Hooks.on("combatTurnChange",schedule);
+  Hooks.on("canvasReady",()=>schedule(game.combat));
+  Hooks.on("ready",()=>schedule(game.combat));
+  Hooks.on("pauseGame",paused=>{
+    if (!paused) return schedule(game.combat);
+    for (const job of jobs.values()) job.cancelled=true;
+  });
+  const cancelEffect=effect=>{
+    for (const job of jobs.values()) {
+      if (job.tokenId===effect.getFlag(ID,"token") && job.effectId===effect.id) job.cancelled=true;
+    }
+  };
+  Hooks.on("deleteActiveEffect",cancelEffect);
+  Hooks.on("updateActiveEffect",(effect,changes)=>{if (changes.disabled) cancelEffect(effect);});
+  Hooks.on("deleteCombat",combat=>chains.delete(combat.id));
+});
+
