@@ -9,7 +9,8 @@ const position=t=>({x:t.document.x,y:t.document.y,elevation:t.document.elevation
 function sameTurn(combat,combatant,round) {
   return game.user.isActiveGM && game.combat?.id===combat.id && combat.started &&
     combat.round===round && combat.combatant?.id===combatant.id && !game.paused &&
-    canvas.ready && combat.scene?.id===canvas.scene.id;
+    canvas.ready && !!canvas.scene && combatant.token?.parent?.id===canvas.scene.id &&
+    (!combat.scene || combat.scene.id===canvas.scene.id);
 }
 
 async function play(combat,combatant,round,token,job) {
@@ -87,7 +88,7 @@ function schedule(combat) {
 
 Hooks.once("init",()=>{
   if (game.release.generation!==13 || game.system.id!=="dnd5e" || !/^5\./.test(game.system.version)) return;
-  game.settings.register(ID,"applyDamage",{name:"自動套用傷害",hint:"命中或豁免結算後，由 dnd5e 處理抗性、免疫與暫時生命值。若另有模組自動扣血，可關閉這項設定。",scope:"world",config:true,type:Boolean,default:true});
+  game.settings.register(ID,"applyDamage",{name:"自動套用傷害",hint:"命中或豁免結算後，由 dnd5e 處理抗性、免疫與暫時生命值。使用 Midi-QOL 活動時，依 Midi-QOL 世界的扣血設定。",scope:"world",config:true,type:Boolean,default:true});
   Hooks.on("renderTokenHUD",renderHUD);
   Hooks.on("combatTurnChange",schedule);
   Hooks.on("canvasReady",()=>schedule(game.combat));
@@ -102,7 +103,18 @@ Hooks.once("init",()=>{
     }
   };
   Hooks.on("deleteActiveEffect",cancelEffect);
-  Hooks.on("updateActiveEffect",(effect,changes)=>{if (changes.disabled) cancelEffect(effect);});
+  const checkEffect = effect => {
+    const combat = game.combat;
+    if (combat?.combatant?.token?.uuid === effect.getFlag(ID,"token")) schedule(combat);
+  };
+  Hooks.on("createActiveEffect",checkEffect);
+  Hooks.on("updateActiveEffect",(effect,changes)=>{
+    if (changes.disabled) cancelEffect(effect);
+    else if (changes.disabled === false) checkEffect(effect);
+  });
+  Hooks.on("updateToken",(token,changes)=>{
+    if (changes.flags?.[ID]?.sequence && game.combat?.combatant?.token?.uuid === token.uuid) schedule(game.combat);
+  });
   Hooks.on("deleteCombat",combat=>chains.delete(combat.id));
 });
 

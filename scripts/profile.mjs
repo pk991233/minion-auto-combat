@@ -9,14 +9,18 @@ export function enabled(token) {
   return token?.actor?.type === "npc" && !!effect && effect.active && !effect.disabled;
 }
 
+export function isAttack(activity) {
+  return ["attack", "midiAttack"].includes(activity.type);
+}
+
 export function available(actor) {
   const entries = [];
   for (const item of actor.items) {
     const spell = item.type === "spell";
     if (spell && item.system.level !== 0) continue;
     for (const activity of item.system.activities ?? []) {
-      const save = spell && activity.type === "save" && activity.damage?.parts?.length;
-      if (!(save || activity.type === "attack")) continue;
+      const save = spell && ["save", "midiSave"].includes(activity.type) && activity.damage?.parts?.length;
+      if (!(save || isAttack(activity))) continue;
       if (activity.activation?.type && !["action", "attack"].includes(activity.activation.type)) continue;
       if (activity.target?.template?.type || activity.target?.affects?.type === "self") continue;
       if (activity.consumption?.targets?.some(t => t.type === "spellSlots")) continue;

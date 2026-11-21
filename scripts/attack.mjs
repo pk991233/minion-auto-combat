@@ -1,5 +1,5 @@
 import {distance, lineOpen, sceneLength} from "./movement.mjs";
-import {ID} from "./profile.mjs";
+import {ID, isAttack} from "./profile.mjs";
 
 const hasAny = (actor,ids) => ids.some(id=>actor.statuses.has(id));
 export const incapacitated = a => hasAny(a,["incapacitated","unconscious","dead","paralyzed","petrified","stunned"]);
@@ -17,7 +17,7 @@ export function selectTarget(source) {
 }
 
 export function reach({item,activity}) {
-  const melee = activity.type === "attack" && activity.attack.type.value === "melee";
+  const melee = isAttack(activity) && activity.attack.type.value === "melee";
   const weapon = item.type === "weapon" && !activity.range.override;
   const r = weapon ? item.system.range : activity.range;
   const unit = r?.units ?? "ft";
@@ -68,12 +68,31 @@ export async function strike(source,target,entry,r,guard) {
   const ammoId=choices.find(o=>o.value && source.actor.items.get(o.value)?.system.quantity > 0)?.value;
   if (choices.some(o=>o.value) && !ammoId) return true;
   const ammo=ammoId ? source.actor.items.get(ammoId) : undefined;
+  if (game.modules.get("midi-qol")?.active && activity.midiProperties) {
+    const midi = globalThis.MidiQOL;
+    if (typeof midi?.completeActivityUse !== "function") throw Error("Midi-QOL 尚未提供活動執行介面。");
+    const flags = isAttack(activity) ? attackModifiers(source,target,r,canvas.tokens.placeables) : {};
+    const workflow = await midi.completeActivityUse(activity.uuid, {
+      consume:{spellSlot:false},
+      midiOptions:{
+        targetUuids:[target.document.uuid], ignoreUserTargets:true,
+        workflowOptions:{
+          targetConfirmation:"none", autoRollAttack:true, autoRollDamage:"onHit",
+          fastForwardAttack:true, fastForwardDamage:true, autoConsumeResource:"both",
+          advantage:flags.advantage, disadvantage:flags.disadvantage
+        }
+      }
+    }, {configure:false}, msg(source,target));
+    if (!guard()) return false;
+    if (!workflow || workflow.aborted) throw Error("Midi-QOL 的活動已取消或未完成，請檢查聊天卡。");
+    return true;
+  }
   const used=await activity.use({subsequentActions:false, create:false, consume:{spellSlot:false}},
     quiet, {create:false, ...msg(source,target)});
   if (!guard() || !targetable(source,target)) return false;
   if (!used) throw Error("系統取消了活動，請由 GM 接手此回合。");
   let critical=false, multiplier=1;
-  if (activity.type === "attack") {
+  if (isAttack(activity)) {
     const flags=attackModifiers(source,target,r,canvas.tokens.placeables);
     const ac=target.actor.system.attributes.ac.value;
     const rolls=await activity.rollAttack({advantage:flags.advantage,disadvantage:flags.disadvantage,

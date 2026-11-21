@@ -1,4 +1,4 @@
-# 小怪自動戰鬥 0.1.0
+# 小怪自動戰鬥 0.1.1
 
 ## 透過 Foundry 安裝
 
@@ -8,7 +8,7 @@
 https://github.com/pk991233/minion-auto-combat/releases/latest/download/module.json
 ```
 
-也可[下載 v0.1.0 安裝 ZIP](https://github.com/pk991233/minion-auto-combat/releases/download/v0.1.0/minion-auto-combat-0.1.0.zip) 手動安裝。
+也可[下載 v0.1.1 安裝 ZIP](https://github.com/pk991233/minion-auto-combat/releases/download/v0.1.1/minion-auto-combat-0.1.1.zip) 手動安裝。
 
 GM 可以替個別 NPC Token 開啟「自動戰鬥」。輪到牠時，模組會選擇最近的玩家角色或友好單位、移動到射程內、執行指定攻擊，然後推進先攻。GM 可以在角色效果清單或 Token 設定中途停用效果。
 
@@ -21,6 +21,12 @@ GM 可以替個別 NPC Token 開啟「自動戰鬥」。輪到牠時，模組會
 5. 要停用時，在同一視窗取消勾選並儲存，也可以在角色卡停用或刪除帶有該 Token 名稱的「自動戰鬥」效果。共用角色卡的 Token 各自有開關和攻擊順序。
 
 例如「啃咬一次、爪擊兩次」，第一列選「啃咬」並填 1，第二列選「爪擊」並填 2。三下各自擲命中，命中才擲該下的傷害。若目標在中途倒下，下一擊會重新選最近的有效目標。
+
+## 0.1.1 的回合處理
+
+遭遇可以綁定場景，也可以維持未連結。輪到小怪時，模組依參戰 Token 所屬的場景判斷，主控 GM 需檢視該場景。若在小怪回合開始後才開啟效果，尚未執行的回合會開始自動處理。
+    
+使用 Midi-QOL 的攻擊與傷害戲法時，模組把選定的目標交給 Midi-QOL，每下等待該活動結束後再執行下一下。命中、豁免、反應提示與實際扣血依 Midi-QOL 世界設定處理。聊天卡若等待 GM 或玩家回應，完成該步後才會推進。原生 dnd5e 活動仍使用本模組的「自動套用傷害」設定。
 
 ## 選擇攻擊
 
@@ -51,7 +57,8 @@ GM 可以替個別 NPC Token 開啟「自動戰鬥」。輪到牠時，模組會
 | --- | --- |
 | Foundry 13.351 ／ dnd5e 5.3.3 | 在獨立的純 dnd5e 世界，以方格地圖和 Token HUD 操作。包含兩位 GM 與一位玩家同時登入、同一角色的多個 Token、三次攻擊順序、命中扣血、戰鬥回合推進、束縛、伏地、兩類戲法、中途停用及實牆繞路。另以未連結小怪驗證重複回合通知、每擊扣一次資源、手動退回同一回合，以及無有效目標時的行為。 |
 | Foundry 13.341 ／ dnd5e 5.0.0 | 最低目標組合。已比對 dnd5e 5.0.0 發布標籤的活動使用、攻擊、傷害與豁免介面。此組合尚待世界內實測。 |
-| 六角格、無格地圖、戰鬥整合模組 | 本版世界測試使用方格地圖及原生系統。 |
+| Midi-QOL 13.0.63、Monk's TokenBar 13.02、Combat Enhancements 1.3.1 | 以未綁定場景的遭遇，驗證當回合開啟效果、移動、兩次攻擊、伏地優勢、傷害與資源各結算一次、還原 GM 原本指定的目標，以及單體豁免戲法。 |
+| 六角格、無格地圖 | 世界測試使用方格地圖。 |
 
 官方文件與原始碼：[Foundry 模組規格](https://foundryvtt.com/article/module-development/) · [回合事件](https://foundryvtt.com/api/v13/functions/hookEvents.combatTurnChange.html) · [dnd5e 5.0.0](https://github.com/foundryvtt/dnd5e/tree/release-5.0.0) · [dnd5e 5.3.3](https://github.com/foundryvtt/dnd5e/tree/release-5.3.3)。
 
