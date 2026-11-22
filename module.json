@@ -2,7 +2,7 @@
   "id": "minion-auto-combat",
   "title": "小怪自動戰鬥",
   "description": "由 GM 為個別 NPC Token 開啟自動戰鬥，依移速接敵、執行攻擊順序並結束回合。",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "compatibility": {
     "minimum": "13.339",
     "verified": "13.351",
@@ -25,5 +25,5 @@
   ],
   "url": "https://github.com/pk991233/minion-auto-combat",
   "manifest": "https://github.com/pk991233/minion-auto-combat/releases/latest/download/module.json",
-  "download": "https://github.com/pk991233/minion-auto-combat/releases/download/v0.1.1/minion-auto-combat-0.1.1.zip"
+  "download": "https://github.com/pk991233/minion-auto-combat/releases/download/v0.1.2/minion-auto-combat-0.1.2.zip"
 }

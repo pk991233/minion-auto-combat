@@ -2,6 +2,11 @@ import {distance, lineOpen, sceneLength} from "./movement.mjs";
 import {ID, isAttack} from "./profile.mjs";
 
 const hasAny = (actor,ids) => ids.some(id=>actor.statuses.has(id));
+const dodgeNames = new Set(["閃避", "闪避", "dodge", "dodging"]);
+function isDodging(actor) {
+  return hasAny(actor, ["dodging", "dodge"]) ||
+    actor.appliedEffects.some(effect => dodgeNames.has(effect.name.trim().toLowerCase()));
+}
 export const incapacitated = a => hasAny(a,["incapacitated","unconscious","dead","paralyzed","petrified","stunned"]);
 export function targetable(source,t) {
   if (t === source || !t?.actor || t.document.hidden || t.combatant?.defeated || t.actor.statuses.has("dead")
@@ -30,7 +35,7 @@ export function attackModifiers(a,b,r,nearby) {
   const near = distance(a,b) <= sceneLength(5)+0.001;
   const prone = b.actor.statuses.has("prone");
   const advantage = hasAny(b.actor,["restrained","blinded","unconscious","paralyzed","stunned","petrified"]) || (near && prone);
-  const disadvantage = hasAny(a.actor,["restrained","prone","poisoned","blinded"]) || (!near && prone) ||
+  const disadvantage = isDodging(b.actor) || hasAny(a.actor,["restrained","prone","poisoned","blinded"]) || (!near && prone) ||
     distance(a,b) > r.normal+0.001 || (r.ranged && nearby.some(t=>targetable(a,t) && !incapacitated(t.actor) &&
     !t.actor.statuses.has("blinded") && distance(a,t)<=sceneLength(5)+0.001 && lineOpen(a,t)));
   return {advantage,disadvantage,closeCritical:near && hasAny(b.actor,["paralyzed","unconscious"])};

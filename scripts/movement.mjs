@@ -45,7 +45,52 @@ export function walkSpeed(token) {
   const s = token.actor.statuses;
   if (["grappled","restrained","paralyzed","petrified","unconscious","dead","stunned"].some(id=>s.has(id))) return 0;
   const move = token.actor.system.attributes.movement;
-  return sceneLength(move.walk, move.units) / (s.has("prone") ? 2 : 1);
+  return Math.max(0, sceneLength(move.walk, move.units));
+}
+
+// Foundry clears recorded movement at the start of the token's turn. It may
+// already contain a GM's movement if automation was enabled partway through.
+export function turnMovement(token) {
+  const spent = (token.document.movementHistory ?? []).reduce((sum, p) => sum + p.cost, 0);
+  return {history: [spot(token)], spent, dashed: false, triedStanding: false};
+}
+
+function remaining(token, movement) {
+  const allowance = walkSpeed(token) * (movement.dashed ? 2 : 1);
+  return Math.max(0, allowance - movement.spent);
+}
+
+export async function standIfPossible(token, movement) {
+  if (movement.triedStanding || !token.actor.statuses.has("prone")) return;
+  const cost = walkSpeed(token) / 2;
+  if (cost <= 0 || remaining(token, movement) + EPS < cost) return;
+  movement.triedStanding = true;
+  await token.actor.toggleStatusEffect("prone", {active: false});
+  if (!token.actor.statuses.has("prone")) movement.spent += cost;
+}
+
+const walkingCost = token => token.actor.statuses.has("prone") ? 2 : 1;
+
+export function routeBudget(token, movement) {
+  return travelCost(token, movement.history) + remaining(token, movement) / walkingCost(token);
+}
+
+export async function followRoute(token, target, range, route, movement, canContinue) {
+  const history = movement.history;
+  for (const dest of route) {
+    if (!canContinue() || canReach(token, target, range)) break;
+    const before = travelCost(token, history);
+    const rate = walkingCost(token);
+    if ((travelCost(token, [...history, dest]) - before) * rate > remaining(token, movement) + EPS) break;
+    if (!stepOpen(token, spot(token), dest)) break;
+    const moved = await token.document.move({...dest, action: rate === 2 ? "crawl" : "walk"}, {method:"api", showRuler:false});
+    await token.movementAnimationPromise;
+    const actual = spot(token);
+    if (!moved || (actual.x === history.at(-1).x && actual.y === history.at(-1).y)) break;
+    history.push(actual);
+    movement.spent += (travelCost(token, history) - before) * rate;
+    if (actual.x !== dest.x || actual.y !== dest.y) break;
+  }
 }
 
 function overlaps(a,p,other) {
@@ -96,7 +141,7 @@ export function travelCost(token, steps) {
 // Search one route beyond this turn's speed, then walk only its affordable prefix.
 export function planRoute(a,b,range,history,budget) {
   const start = spot(a);
-  if (budget <= 0 || canReach(a,b,range,start)) return [];
+  if (budget <= travelCost(a, history) + EPS || canReach(a,b,range,start)) return [];
   const key = p => Math.round(p.x)+","+Math.round(p.y);
   const gap = p=>Math.max(0,distance(a,b,p)-range);
   const goal=center(b);

@@ -1,16 +1,83 @@
 import {ID, enabled, marker, profile, renderHUD} from "./profile.mjs";
 import {reach, selectTarget, targetable, strike, incapacitated} from "./attack.mjs";
-import {planRoute, walkSpeed, canReach, stepOpen} from "./movement.mjs";
+import {canReach, followRoute, planRoute, routeBudget, standIfPossible, turnMovement} from "./movement.mjs";
 
 const jobs=new Map();
 const chains=new Map();
-const position=t=>({x:t.document.x,y:t.document.y,elevation:t.document.elevation});
 
 function sameTurn(combat,combatant,round) {
   return game.user.isActiveGM && game.combat?.id===combat.id && combat.started &&
     combat.round===round && combat.combatant?.id===combatant.id && !game.paused &&
     canvas.ready && !!canvas.scene && combatant.token?.parent?.id===canvas.scene.id &&
     (!combat.scene || combat.scene.id===canvas.scene.id);
+}
+
+function routeForAttack(token, target, range, movement) {
+  if (canReach(token, target, range.normal)) return [];
+  const budget = routeBudget(token, movement);
+  const route = planRoute(token, target, range.normal, movement.history, budget);
+  // Take the closest affordable shot on this approach, including long range.
+  const lastShot = route.findLastIndex(p => canReach(token, target, range.max, p));
+  if (lastShot >= 0) return route.slice(0, lastShot + 1);
+  if (canReach(token, target, range.max)) return [];
+  if (range.normal < range.max) {
+    const alternate = planRoute(token, target, range.max, movement.history, budget);
+    if (alternate.length && canReach(token, target, range.max, alternate.at(-1))) return alternate;
+  }
+  return null;
+}
+
+async function reportDash(token) {
+  const message = {
+    speaker: ChatMessage.getSpeaker({actor:token.actor, token:token.document, scene:canvas.scene}),
+    content: "疾走", flags: {[ID]: {action:"dash"}}
+  };
+  ChatMessage.applyRollMode(message, token.document.hidden ? "gmroll" : game.settings.get("core","rollMode"));
+  await ChatMessage.create(message);
+}
+
+async function takeActions(token, rows, canAct) {
+  const movement = turnMovement(token);
+  await standIfPossible(token, movement);
+  let usedAction = false;
+  let pursuit;
+  for (const row of rows) {
+    const [itemId, activityId] = row.key.split(".");
+    for (let n = 0; n < row.count; n++) {
+      if (!canAct()) return;
+      const target = selectTarget(token);
+      if (!target) return;
+      // Moving or spending a resource can refresh a synthetic actor's items.
+      const item = token.actor.items.get(itemId);
+      const activity = item?.system.activities.get(activityId);
+      if (!activity) break;
+      const entry = {item, activity};
+      const range = reach(entry);
+      if (range.max <= 0) break;
+      const route = routeForAttack(token, target, range, movement);
+      const canContinue = () => canAct() && targetable(token, target);
+      if (route) await followRoute(token, target, range.normal, route, movement, canContinue);
+      if (!canContinue()) return;
+      if (!canReach(token, target, range.max)) {
+        pursuit ??= {target, range};
+        break; // Another configured weapon or cantrip may still be in range.
+      }
+      usedAction = true;
+      pursuit = undefined;
+      if (!await strike(token, target, entry, range, canAct)) return false;
+    }
+  }
+  if (!pursuit || !canAct()) return;
+  const {target, range} = pursuit;
+  const canContinue = () => canAct() && targetable(token, target);
+  if (!canContinue()) return;
+  movement.dashed = !usedAction;
+  const beforeStanding = movement.spent;
+  if (movement.dashed) await standIfPossible(token, movement);
+  if (!canContinue()) return;
+  const route = planRoute(token, target, range.normal, movement.history, routeBudget(token, movement));
+  if (movement.dashed && (route.length || movement.spent > beforeStanding)) await reportDash(token);
+  await followRoute(token, target, range.normal, route, movement, canContinue);
 }
 
 async function play(combat,combatant,round,token,job) {
@@ -25,35 +92,7 @@ async function play(combat,combatant,round,token,job) {
   }
   // Persist before side effects. Reconnection after an interrupted attack leaves the turn to the GM.
   await combatant.setFlag(ID,"lastRound",round);
-  const history=[position(token)];
-  for (const row of cfg.rows) {
-    for (let n=0;n<row.count;n++) {
-      if (!canAct()) break;
-      const target=selectTarget(token);
-      if (!target) break;
-      // Synthetic actor documents can be refreshed after consuming an item or moving.
-      const [itemId,activityId]=row.key.split(".");
-      const item=token.actor.items.get(itemId), activity=item?.system.activities.get(activityId);
-      if (!activity) continue;
-      const entry={item,activity}, range=reach(entry);
-      if (range.max<=0) continue;
-      if (!canReach(token,target,range.normal)) {
-        const route=planRoute(token,target,range.normal,history,walkSpeed(token));
-        for (const dest of route) {
-          if (!canAct() || !targetable(token,target) || canReach(token,target,range.normal)) break;
-          if (!stepOpen(token,position(token),dest)) break;
-          const moved=await token.document.move(dest,{method:"api",showRuler:false});
-          await token.movementAnimationPromise;
-          const actual=position(token);
-          if (!moved || (actual.x===history.at(-1).x && actual.y===history.at(-1).y)) break;
-          history.push(actual);
-          if (actual.x!==dest.x || actual.y!==dest.y) break;
-        }
-      }
-      if (!canAct() || !targetable(token,target) || !canReach(token,target,range.max)) continue;
-      if (!await strike(token,target,entry,range,canAct)) return;
-    }
-  }
+  if (canAct() && await takeActions(token, cfg.rows, canAct) === false) return;
   if (!guard()) return;
   const chain=chains.get(combat.id) ?? new Set();
   chain.add(combatant.id);
